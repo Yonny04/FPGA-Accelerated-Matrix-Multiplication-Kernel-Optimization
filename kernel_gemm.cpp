@@ -10,6 +10,7 @@ static float loc_A[TS][TS];
 static float loc_B[TS][TS];
 static float loc_C[TS][TS];
 
+
 static void load_A (float A[NI*NK], int i_idx, int k_idx, float alpha){
     //maybe pipeline here too or inlining 
     //look into inlining 
@@ -78,10 +79,20 @@ void compute_gemm() {
 /* Main computational kernel. The whole function will be timed,
    including the call and return. */
 void kernel_gemm(float C[NI*NJ], float A[NI*NK], float B[NK*NJ], float alpha, float beta){
+	#pragma HLS INTERFACE m_axi port=A offset=slave bundle=gmem0 max_widen_bitwidth=512
+	#pragma HLS INTERFACE m_axi port=B offset=slave bundle=gmem1 max_widen_bitwidth=512
+	#pragma HLS INTERFACE m_axi port=C offset=slave bundle=gmem2 max_widen_bitwidth=512
+
+	#pragma HLS INTERFACE s_axilite port=A bundle=control
+	#pragma HLS INTERFACE s_axilite port=B bundle=control
+	#pragma HLS INTERFACE s_axilite port=C bundle=control
+	#pragma HLS INTERFACE s_axilite port=alpha bundle=control
+	#pragma HLS INTERFACE s_axilite port=beta bundle=control
+	#pragma HLS INTERFACE s_axilite port=return bundle=control
 
 int i, j, k;
-#pragma HLS ARRAY_PARTITION variable=loc_B cyclic factor=64 dim=2
-#pragma HLS ARRAY_PARTITION variable=loc_C cyclic factor=64 dim=2
+#pragma HLS ARRAY_PARTITION variable=loc_B cyclic factor=8 dim=2
+#pragma HLS ARRAY_PARTITION variable=loc_C cyclic factor=8 dim=2
 #pragma HLS ARRAY_PARTITION variable=loc_A complete dim=2
 
 // => Form C := alpha*A*B + beta*C,
@@ -94,7 +105,8 @@ Main_Loop_i:
 	for (i = 0; i < NI; i+=TS) {
 Main_Loop_J: 	for (j = 0; j < NJ; j+=TS) {
 			load_C(C, i, j, beta);
-Main_Loop_K:		for (k = 0; k < NK; k+=TS) { 	   
+Main_Loop_K:		for (k = 0; k < NK; k+=TS) { 
+				//load_tiles(A, B, C, loc_A, loc_B, loc_C, i, j, k);	   
 				load_A(A, i, k, alpha);
 				load_B(B, k, j);
 				compute_gemm();
