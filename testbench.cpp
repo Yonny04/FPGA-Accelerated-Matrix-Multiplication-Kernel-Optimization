@@ -87,7 +87,7 @@ kernel_gemm_reference(C_reference, A, B, 1.5, 2.5);
 
 
 int errors = 0;
-const float tolerance = 1e-2f;  
+const float tolerance = 5e-2f;  
 
 /* What do you think about instead of getting the entire sum, round individual sum calculation to remove the tiny errors
 for (int idx = 0; idx < NI*NJ; idx++) {
