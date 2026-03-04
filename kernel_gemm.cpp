@@ -103,6 +103,7 @@ int i, j, k;
 
 Main_Loop_i: 
 	for (i = 0; i < NI; i+=TS) {
+				#pragma HLS PIPELINE II = 1
 Main_Loop_J: 	for (j = 0; j < NJ; j+=TS) {
 			load_C(C, i, j, beta);
 Main_Loop_K:		for (k = 0; k < NK; k+=TS) { 
