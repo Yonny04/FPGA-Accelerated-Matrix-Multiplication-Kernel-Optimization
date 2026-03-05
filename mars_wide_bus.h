@@ -10,10 +10,7 @@
 #include<assert.h>
 #include<stdlib.h>
 
-// --------------------------------
-#ifndef LARGE_BUS
-#define LARGE_BUS 512
-#endif 
+// -------------------------------- 
 
 #ifndef SIZE_1
 #define SIZE_1 1
