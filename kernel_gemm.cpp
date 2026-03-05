@@ -1,68 +1,128 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "kernel_gemm.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-
+#include "mars_wide_bus.h"
 
 static float loc_A[TS][TS];
 static float loc_B[TS][TS];
 static float loc_C[TS][TS];
 
-
 static void load_A (float A[NI*NK], int i_idx, int k_idx, float alpha){
     //maybe pipeline here too or inlining 
     //look into inlining 
     #pragma HLS INLINE
+
+	//make a buffer to hold the row of the tile of A that we are loading
+	//1D so it's contiguous
+	float buf_A[TS];
+	#pragma HLS ARRAY_PARTITION variable = buf_A complete
+
+	//make a pointer to MARS_WIDE_BUS_TYPE to read from the wide bus
+	//A_wide is a pointer to the wide bus version of A
+	MARS_WIDE_BUS_TYPE *A_wide = (MARS_WIDE_BUS_TYPE *)A;
+
+	float a = alpha;
 Load_Loop_A_i:
 	for (int i = 0; i < TS; i++){
+
 	#pragma HLS PIPELINE II = 1
-Load_Loop_K:
-		for (int k = 0; k < TS; k++){
-        		loc_A[i][k] = A[(i + i_idx) * NK + (k + k_idx)] * alpha;
-      		}
-    	}
+
+	//matrix row we are currently loading into the buffer
+	int matrix_row = i + i_idx;
+	//the beginning index of the tile 
+	size_t init_idx = (size_t)matrix_row * NK + (size_t)k_idx;
+	//converting to bytes
+	size_t offset_byte = init_idx * sizeof(float);
+
+	//copying the row of tile A into the buffer
+	//read the row in the buffer as wide bus values
+	//the offset is the starting index of the tile row in bytes
+	//TS * sizeof(float) = size of tyle times 4 bytes per float = overall size of tile in bytes
+	memcpy_wide_bus_read_float(buf_A, A_wide, offset_byte, TS * sizeof(float));
+
+	#pragma HLS UNROLL
+	for (int k = 0; k < TS; k++){
+    	loc_A[i][k] = buf_A[k] * a;
+      	}
+    }
 }
 
 static void load_B(float B[NK*NJ], int k_idx, int j_idx){
-#pragma HLS INLINE  
+#pragma HLS INLINE 
+
+float buf_B[TS];
+#pragma HLS ARRAY_PARTITION variable = buf_B complete
+
+MARS_WIDE_BUS_TYPE *B_wide = (MARS_WIDE_BUS_TYPE *)B;
+
 Load_Loop_C_K:	
 	for (int k = 0; k < TS; k++){
+		
 		#pragma HLS PIPELINE II = 1
-Load_Loop_B_J:	for (int j = 0; j < TS; j++){
-			loc_B[k][j] = B[(k + k_idx) * NJ + (j+j_idx)];
+		int matrix_row = k + k_idx;
+		size_t init_idx = (size_t)matrix_row * NJ + (size_t)j_idx;
+		size_t offset_byte = init_idx * sizeof(float);
+		memcpy_wide_bus_read_float(buf_B, B_wide, offset_byte, TS * sizeof(float));
+
+Load_Loop_B_J:	
+			#pragma HLS UNROLL
+			for (int j = 0; j < TS; j++){
+				loc_B[k][j] = buf_B[j];
 		}
     	}
 }
 
 static void load_C(float C[NI*NJ], int i_idx, int j_idx, float beta) {
 #pragma HLS INLINE
+
+float buf_C[TS];
+#pragma HLS ARRAY_PARTITION variable = buf_C complete
+
+MARS_WIDE_BUS_TYPE *C_wide = (MARS_WIDE_BUS_TYPE *)C;
+
 Load_Loop_C_i:
   for (int i = 0; i < TS; i++) {
-#pragma HLS PIPELINE II=1
+
+	#pragma HLS PIPELINE II=1	
+	int matrix_row = i + i_idx;
+	size_t init_idx = (size_t)matrix_row * NJ + (size_t)j_idx;
+	size_t offset_byte = init_idx * sizeof(float);
+	memcpy_wide_bus_read_float(buf_C, C_wide, offset_byte, TS * sizeof(float));
+
 Load_Loop_C_j:
+	#pragma HLS UNROLL
     for (int j = 0; j < TS; j++) {
-      loc_C[i][j] = beta * C[(i + i_idx) * NJ + (j + j_idx)];
+      loc_C[i][j] = beta * buf_C[j];
     }
   }
 }
 
-
 void store_C(float C[NI*NJ], float loc_C[TS][TS], int i_idx, int j_idx){
 #pragma HLS INLINE
-Store_Loop_i:	for (int i = 0; i < TS; i++){
-        	#pragma HLS PIPELINE II = 1
-	Store_Loop_J:for(int j = 0; j < TS; j++){
-            		// Correct indexing for a 1D flattened array
-			C[(i + i_idx) * NJ + (j + j_idx)] = loc_C[i][j];
+
+float buf_C[TS];
+#pragma HLS ARRAY_PARTITION variable = buf_C complete
+
+MARS_WIDE_BUS_TYPE *C_wide = (MARS_WIDE_BUS_TYPE *)C;
+
+Store_Loop_i:	
+#pragma HLS PIPELINE II=1			
+for (int i = 0; i < TS; i++){
+	Store_Loop_J:
+				#pragma HLS UNROLL
+				for(int j = 0; j < TS; j++){
+				buf_C[j] = loc_C[i][j];
 			}
-    		}
+		int matrix_row = i + i_idx;
+		size_t init_idx = (size_t)matrix_row * NJ + (size_t)j_idx;
+		size_t offset_byte = init_idx * sizeof(float);
+		memcpy_wide_bus_write_float(C_wide, buf_C, offset_byte, TS * sizeof(float));
+
+    	}
 }
 
 void compute_gemm() {
     #pragma HLS INLINE
-    
     // We process the K dimension as the outer compute loop
     Compute_Loop_k: for(int k = 0; k < TS; k++) {
         Compute_Loop_i: for(int i = 0; i < TS; i++) {
@@ -91,8 +151,9 @@ void kernel_gemm(float C[NI*NJ], float A[NI*NK], float B[NK*NJ], float alpha, fl
 	#pragma HLS INTERFACE s_axilite port=return bundle=control
 
 int i, j, k;
-#pragma HLS ARRAY_PARTITION variable=loc_B cyclic factor=8 dim=2
-#pragma HLS ARRAY_PARTITION variable=loc_C cyclic factor=8 dim=2
+
+#pragma HLS ARRAY_PARTITION variable=loc_B cyclic factor=64 dim=2
+#pragma HLS ARRAY_PARTITION variable=loc_C cyclic factor=64 dim=2
 #pragma HLS ARRAY_PARTITION variable=loc_A complete dim=2
 
 // => Form C := alpha*A*B + beta*C,
@@ -103,11 +164,12 @@ int i, j, k;
 
 Main_Loop_i: 
 	for (i = 0; i < NI; i+=TS) {
-				#pragma HLS PIPELINE II = 1
-Main_Loop_J: 	for (j = 0; j < NJ; j+=TS) {
+				
+Main_Loop_J: 	
+			#pragma HLS PIPELINE II = 1
+			for (j = 0; j < NJ; j+=TS) {
 			load_C(C, i, j, beta);
-Main_Loop_K:		for (k = 0; k < NK; k+=TS) { 
-				//load_tiles(A, B, C, loc_A, loc_B, loc_C, i, j, k);	   
+Main_Loop_K:		for (k = 0; k < NK; k+=TS) { 	   
 				load_A(A, i, k, alpha);
 				load_B(B, k, j);
 				compute_gemm();
