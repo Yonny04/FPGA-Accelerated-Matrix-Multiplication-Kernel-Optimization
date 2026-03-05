@@ -1,0 +1,88 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include "kernel_gemm.h"
+#include "mars_wide_bus.h"
+
+static float loc_A[TS][TS];
+static float loc_B[TS][TS];
+static float loc_C[TS][TS];
+
+static void load_A (float A[NI*NK], int i_idx, int k_idx, float alpha){
+    //maybe pipeline here too or inlining 
+    //look into inlining 
+    #pragma HLS INLINE
+
+	//make a buffer to hold the row of the tile of A that we are loading
+	//1D so it's contiguous
+	float buf_A[TS];
+
+	//make a pointer to MARS_WIDE_BUS_TYPE to read from the wide bus
+	//A_wide is a pointer to the wide bus version of A
+	MARS_WIDE_BUS_TYPE *A_wide = (MARS_WIDE_BUS_TYPE *)A;
+
+Load_Loop_A_i:
+	for (int i = 0; i < TS; i++){
+
+	//matrix row we are currently loading into the buffer
+	int matrix_row = i + i_idx;
+	//the beginning index of the tile 
+	size_t init_idx = (size_t)matrix_row * NK + (size_t)k_idx;
+	//converting to bytes
+	size_t offset_byte = init_idx * sizeof(float);
+
+	//copying the row of tile A into the buffer
+	//read the row in the buffer as wide bus values
+	//the offset is the starting index of the tile row in bytes
+	//TS * sizeof(float) = size of tyle times 4 bytes per float = overall size of tile in bytes
+	memcpy_wide_bus_read_float(buf_A, A_wide, offset_byte, TS * sizeof(float));
+
+Load_Loop_K:
+		for (int k = 0; k < TS; k++){
+        		loc_A[i][k] = buf_A[k] * alpha;
+      		}
+    	}
+}
+
+static void load_B(float B[NK*NJ], int k_idx, int j_idx){
+#pragma HLS INLINE 
+
+float buf_B[TS];
+
+MARS_WIDE_BUS_TYPE *B_wide = (MARS_WIDE_BUS_TYPE *)B;
+
+Load_Loop_C_K:	
+	for (int k = 0; k < TS; k++){
+		
+		int matrix_row = k + k_idx;
+		size_t init_idx = (size_t)matrix_row * NJ + (size_t)j_idx;
+		size_t offset_byte = init_idx * sizeof(float);
+		memcpy_wide_bus_read_float(buf_B, B_wide, offset_byte, TS * sizeof(float));
+
+Load_Loop_B_J:	
+			for (int j = 0; j < TS; j++){
+				loc_B[k][j] = buf_B[j];
+		}
+    	}
+}
+
+static void load_C(float C[NI*NJ], int i_idx, int j_idx, float beta) {
+#pragma HLS INLINE
+
+float buf_C[TS];
+
+MARS_WIDE_BUS_TYPE *C_wide = (MARS_WIDE_BUS_TYPE *)C;
+
+Load_Loop_C_i:
+  for (int i = 0; i < TS; i++) {
+
+	int matrix_row = i + i_idx;
+	size_t init_idx = (size_t)matrix_row * NJ + (size_t)j_idx;
+	size_t offset_byte = init_idx * sizeof(float);
+	memcpy_wide_bus_read_float(buf_C, C_wide, offset_byte, TS * sizeof(float));
+
+Load_Loop_C_j:
+    for (int j = 0; j < TS; j++) {
+      loc_C[i][j] = beta * buf_C[j];
+    }
+  }
+}
