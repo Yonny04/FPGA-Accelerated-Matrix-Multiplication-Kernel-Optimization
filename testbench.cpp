@@ -89,16 +89,6 @@ kernel_gemm_reference(C_reference, A, B, 1.5, 2.5);
 int errors = 0;
 const float tolerance = 5e-2f;  
 
-/* What do you think about instead of getting the entire sum, round individual sum calculation to remove the tiny errors
-for (int idx = 0; idx < NI*NJ; idx++) {
-	long hls_val = (long)(C[i*NJ + j] + 0.5f);
-        long cpu_val = (long)(C_reference[i*NJ + j] + 0.5f);
-        
-        if (hls_val - cpu_val != 0) {
-            errors++;
-        }
-}   
-*/
 for (int idx = 0; idx < NI*NJ; idx++) {
     float difference = fabsf(C[idx] - C_reference[idx]);
     if (difference > tolerance) {
@@ -118,7 +108,7 @@ float comparison = fabsf(HLS_sum - CPU_sum);
   
 printf("sum of CPU_sum array = %f\n", CPU_sum);
 printf("sum of HLS_sum array = %f\n", HLS_sum);
-printf("sum of C array = %f\n", sum);
+// printf("sum of C array = %f\n", sum);
 printf("sum of comparison = %f\n", comparison);
 
 int pass = (errors == 0);  

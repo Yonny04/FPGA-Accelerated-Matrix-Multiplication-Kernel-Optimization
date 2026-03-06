@@ -4,7 +4,7 @@
 #define NI 1024
 #define NJ 1024
 #define NK 1024
-#define TS 16
+#define TS 64
 
 #define LARGE_BUS 512
 #include "mars_wide_bus.h"

@@ -127,6 +127,7 @@ static float
 memcpy_wide_bus_single_read_float(MARS_WIDE_BUS_TYPE *a,
                                   size_t offset_byte) {
 #pragma HLS inline self
+#pragma HLS LOOP_TRIPCOUNT min=64 max=64 avg=64
   const size_t data_width = sizeof(float);
   const size_t bus_width = BUS_WIDTH;
   const size_t num_elements = bus_width / data_width;
@@ -2066,6 +2067,7 @@ static void memcpy_wide_bus_write_float(MARS_WIDE_BUS_TYPE *c,
                                                size_t offset_byte,
                                                size_t size_byte) {
 #pragma HLS inline self
+
   const size_t data_width = sizeof(float);
   const size_t bus_width = BUS_WIDTH;
   const size_t num_elements = bus_width / data_width;
@@ -2085,6 +2087,7 @@ static void memcpy_wide_bus_write_float(MARS_WIDE_BUS_TYPE *c,
     if (head_align != 0 || tail_align != (num_elements - 1))
       tmp = c[start];
     for (j = 0; j < num_elements; ++j) {
+      // #pragma HLS LOOP_TRIPCOUNT min=64 max=64 avg=64
       if (j < head_align)
         continue;
       if (j > tail_align)
