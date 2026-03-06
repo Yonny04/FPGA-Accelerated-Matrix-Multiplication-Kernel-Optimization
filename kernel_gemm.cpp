@@ -92,7 +92,7 @@ Store_Loop_i:
 }
 
 void compute_gemm() {
-#pragma HLS INLINE off
+#pragma HLS INLINE
 // We process the K dimension as the outer compute loop
 Compute_Loop_k: 
 	for(int k = 0; k < TS; k++) {
