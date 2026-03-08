@@ -19,8 +19,6 @@ static void load_A(float A[NI*NK], float loc_A[TS][TS], int i_idx, int k_idx, fl
 Load_Loop_A_I:
     for (int i = 0; i < TS; i++) {
     	#pragma HLS PIPELINE II = 1
-		#pragma HLS LOOP_TRIPCOUNT min=64 max=64 avg=64
-		// float offset = (((i + i_idx) * NK + k_idx) / (LARGE_BUS / 32)) * sizeof(float);
 		size_t offsetA = ((size_t)(i + i_idx) * NK + k_idx) * sizeof(float);
         	memcpy_wide_bus_read_float(
             	&loc_A[i][0],
@@ -82,7 +80,7 @@ void store_C(float C[NI*NJ], float loc_C[TS][TS], int i_idx, int j_idx){
 Store_Loop_i:	
 	for (int i = 0; i < TS; i++) {
 		#pragma HLS PIPELINE II=1
-		#pragma HLS LOOP_TRIPCOUNT min=64 max=64 avg=64
+		#pragma HLS DEPENDENCE variable=C inter WAW false
 		size_t offset = ((size_t)(i + i_idx) * NJ + j_idx) * sizeof(float);
 		memcpy_wide_bus_write_float(
 			(class ap_uint<LARGE_BUS> *)C,
@@ -95,7 +93,6 @@ Store_Loop_i:
 
 void compute_gemm(float loc_A[TS][TS], float loc_B[TS][TS], float loc_C[TS][TS] ) {
 #pragma HLS INLINE
-// We process the K dimension as the outer compute loop
 Compute_Loop_k: 
 	for(int k = 0; k < TS; k++) {
 		// #pragma HLS LOOP_TRIPCOUNT min=64 max=64 avg=64
@@ -183,39 +180,39 @@ void kernel_gemm(float C[NI*NJ], float A[NI*NK], float B[NK*NJ], float alpha, fl
 #pragma HLS INTERFACE m_axi port=C offset=slave bundle=gmem2 max_widen_bitwidth=512
 #pragma HLS INTERFACE s_axilite port=return bundle=control
 
-#pragma HLS ARRAY_PARTITION variable=loc_B cyclic factor=64 dim=3
+#pragma HLS ARRAY_PARTITION variable=loc_B complete dim=3
 #pragma HLS ARRAY_PARTITION variable=loc_C cyclic factor=64 dim=2
-#pragma HLS ARRAY_PARTITION variable=loc_A cyclic factor=64 dim=3
+#pragma HLS ARRAY_PARTITION variable=loc_A complete dim=3
 
     Loop_I: for (int i = 0; i < NI; i += TS) {
         Loop_J: for (int j = 0; j < NJ; j += TS) {
             
-            // 1. Load C tile and scale by Beta
             load_C(C, loc_C, i, j, beta);
 
-            // 2. Tiled Matrix Multiplication with Ping-Pong on A and B
+            // ping pong index
             int pp = 0;
             
             // Initial Loading
             load_A(A, loc_A[pp], i, 0, alpha);
             load_B(B, loc_B[pp], 0, j);
 
-            Loop_K: for (int k = 0; k < NK; k += TS) {
+            Loop_K: 
+				for (int k = 0; k < NK; k += TS) {
                 
-                int next_pp = 1 - pp;
-                int next_k = k + TS;
+					int next_pp = 1 - pp;
+					int next_k = k + TS;
 
-                // Load NEXT tile while computing CURRENT tile
-                if (next_k < NK) {
-                    load_A(A, loc_A[next_pp], i, next_k, alpha);
-                    load_B(B, loc_B[next_pp], next_k, j);
-                }
+					// Load NEXT tile while computing CURRENT tiles
+					if (next_k < NK) {
+						load_A(A, loc_A[next_pp], i, next_k, alpha);
+						load_B(B, loc_B[next_pp], next_k, j);
+					}
 
-                // Computes current values
-                compute_gemm(loc_A[pp], loc_B[pp], loc_C);
-                pp = next_pp; //moves on to the next index
-            }
-            // 3. Store the accumulated result back to Global Memory
+					// compute every iteration
+					compute_gemm(loc_A[pp], loc_B[pp], loc_C);
+					pp = next_pp; //moves on to the next index
+            	}
+            // Store to Global Memory
             store_C(C, loc_C, i, j);
         }
     }
