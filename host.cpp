@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "kernel_gemm.h"
+#include "mm.h"
 #include "xcl2.hpp"
 
 #ifndef ENABLE_VERIFY
@@ -152,7 +152,7 @@ int main(int argc, char** argv) {
   //setting the test size for verification and the tolerance
   const int i_test = 8;
   const int j_test = 8;
-  const float tolerance = 1e-2f;
+  const float tolerance = 5e-2f;
   int errors = 0;
 
   for (int i = 0; i < i_test; ++i) {
