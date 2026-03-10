@@ -1,8 +1,8 @@
 open_project -reset lab4_csim
 set_top kernel_gemm
 add_files mars_wide_bus.h
-add_files kernel_gemm.cpp
-add_files -tb testbench.cpp
+add_files mm.cpp
+add_files -tb mm_test.cpp
 
 
 open_solution -reset "0_naive"
