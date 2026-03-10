@@ -1,13 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "kernel_gemm.h"
+#include "mm.h"
 #include "mars_wide_bus.h"
 
-static float loc_A[TS][TS];
-static float loc_B[TS][TS];
+
+
+static float loc_A[2][TS][TS];
+static float loc_B[2][TS][TS];
 static float loc_C[TS][TS];
 
-static void load_A (float A[NI*NK], int i_idx, int k_idx, float alpha){
+static void load_A (float A[NI*NK], float pp_buf[TS][TS], int i_idx, int k_idx, float alpha){
     //maybe pipeline here too or inlining 
     //look into inlining 
     #pragma HLS INLINE
@@ -42,12 +44,12 @@ Load_Loop_A_i:
 
 	#pragma HLS UNROLL
 	for (int k = 0; k < TS; k++){
-    	loc_A[i][k] = buf_A[k] * a;
+    	pp_buf[i][k] = buf_A[k] * a;
       	}
     }
 }
 
-static void load_B(float B[NK*NJ], int k_idx, int j_idx){
+static void load_B(float B[NK*NJ], float pp_buf[TS][TS], int k_idx, int j_idx){
 #pragma HLS INLINE 
 
 float buf_B[TS];
@@ -67,7 +69,7 @@ Load_Loop_C_K:
 Load_Loop_B_J:	
 			#pragma HLS UNROLL
 			for (int j = 0; j < TS; j++){
-				loc_B[k][j] = buf_B[j];
+				pp_buf[k][j] = buf_B[j];
 		}
     	}
 }
@@ -121,16 +123,16 @@ for (int i = 0; i < TS; i++){
     	}
 }
 
-void compute_gemm() {
+void compute_gemm(float A_ppbuf[TS][TS], float B_ppbuf[TS][TS]) {
     #pragma HLS INLINE
     // We process the K dimension as the outer compute loop
     Compute_Loop_k: for(int k = 0; k < TS; k++) {
         Compute_Loop_i: for(int i = 0; i < TS; i++) {
             #pragma HLS PIPELINE II=1
             Compute_Loop_j: for(int j = 0; j < TS; j++) {
-                #pragma HLS UNROLL
+                #pragma HLS UNROLL factor=8
                 // loc_C stores the partial sums across K iterations
-                loc_C[i][j] += loc_A[i][k] * loc_B[k][j];
+                loc_C[i][j] += A_ppbuf[i][k] * B_ppbuf[k][j];
             }
         }
     }
@@ -138,7 +140,7 @@ void compute_gemm() {
 
 /* Main computational kernel. The whole function will be timed,
    including the call and return. */
-void kernel_gemm(float C[NI*NJ], float A[NI*NK], float B[NK*NJ], float alpha, float beta){
+extern "C" void kernel_gemm(float C[NI*NJ], float A[NI*NK], float B[NK*NJ], float alpha, float beta){
 	#pragma HLS INTERFACE m_axi port=A offset=slave bundle=gmem0 max_widen_bitwidth=512
 	#pragma HLS INTERFACE m_axi port=B offset=slave bundle=gmem1 max_widen_bitwidth=512
 	#pragma HLS INTERFACE m_axi port=C offset=slave bundle=gmem2 max_widen_bitwidth=512
@@ -152,9 +154,9 @@ void kernel_gemm(float C[NI*NJ], float A[NI*NK], float B[NK*NJ], float alpha, fl
 
 int i, j, k;
 
-#pragma HLS ARRAY_PARTITION variable=loc_B cyclic factor=64 dim=2
+#pragma HLS ARRAY_PARTITION variable=loc_B complete dim=3
 #pragma HLS ARRAY_PARTITION variable=loc_C cyclic factor=64 dim=2
-#pragma HLS ARRAY_PARTITION variable=loc_A complete dim=2
+#pragma HLS ARRAY_PARTITION variable=loc_A complete dim=3
 
 // => Form C := alpha*A*B + beta*C,
 //A is NIxNK
@@ -169,10 +171,21 @@ Main_Loop_J:
 			#pragma HLS PIPELINE II = 1
 			for (j = 0; j < NJ; j+=TS) {
 			load_C(C, i, j, beta);
-Main_Loop_K:		for (k = 0; k < NK; k+=TS) { 	   
-				load_A(A, i, k, alpha);
-				load_B(B, k, j);
-				compute_gemm();
+			
+			int pp = 0;
+			load_A(A, loc_A[pp], i, 0, alpha);
+			load_B(B, loc_B[pp], 0, j);
+
+			for (int k = 0; k < NK; k += TS) {
+			compute_gemm(loc_A[pp], loc_B[pp]);
+
+			int next_k = k + TS;
+			if (next_k < NK) {
+				int next_pp = 1 - pp;
+				load_A(A, loc_A[next_pp], i, next_k, alpha);
+				load_B(B, loc_B[next_pp], next_k, j);
+				pp = next_pp;
+			}
 			}
 			store_C(C, loc_C, i, j);
 		}
